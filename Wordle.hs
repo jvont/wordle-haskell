@@ -1,5 +1,7 @@
+module Wordle (play, solve, solveM) where
+
 import Data.Function (on)
-import Data.List (delete, find, nub, sortBy)
+import Data.List
 import qualified Data.Map as M
 import System.Random
 
@@ -93,9 +95,9 @@ letterFreqs :: [String] -> M.Map Char Int
 letterFreqs l = M.fromListWith (+) [(x, 1) | x <- concat l]
 
 -- Solve for and return the next best word, along with remaining solutions
-solveSols :: [String] -> String -> (String, [String])
-solveSols [x] s = (s, [x])
-solveSols d s = (g, solutions h d) where
+solveWord :: [String] -> String -> (String, [String])
+solveWord [x] s = (s, [x])
+solveWord d s = (g, solutions h d) where
   r = rankedWords (letterFreqs d) d
   g = case find (maxDups 0) r of
     Just x -> x
@@ -106,25 +108,26 @@ solveSols d s = (g, solutions h d) where
 solve :: [String] -> String -> Int
 solve d s = go d s 0 where
   go [x] s n = n
-  go d s n = go (snd (solveSols d s)) s (n + 1)
+  go d s n = go (snd (solveWord d s)) s (n + 1)
 
 -- Find a solution, showing steps
-solveM :: [String] -> String -> Int -> IO ()
-solveM d s n = do
-  let (g, d') = solveSols d s
-  if length d' == 1 then do
-    print $ hints s (head d')
-    print $ "Found in " ++ show n ++ " turns!"
-  else do 
-    print $ hints s g
-    solveM d' s (n + 1)
+solveM :: [String] -> String -> IO Int
+solveM d s = go d s 0 where
+  go d s n = do
+    let (g, d') = solveWord d s
+    if length d' == 1 then do
+      print $ hints s (head d')
+      return (n + 1)
+    else do
+      print $ hints s g
+      go d' s (n + 1)
 
 -- Game loop
 --   d = solution words
 --   r = remaining solution words
 --   s = solution word
 --   n = attempts remaining
-run d r s n = do
+loop d r s n = do
   putStr $ show n ++ ": "
   g <- getLine
   if g `elem` d then do
@@ -136,17 +139,18 @@ run d r s n = do
       then putStrLn "Great work!"
     else if n == 1
       then putStrLn $ "Uh oh! The right word was " ++ show s
-    else run d r s (n - 1)
+    else loop d r s (n - 1)
   else do
     putStrLn "Invalid word!"
-    run d d s n
+    loop d d s n
 
-main = do
+play = do
   content <- readFile "words.txt"
   -- get random word, solve
   gen <- getStdGen
   let d = lines content
       s = d !! fst (randomR (0, length d) gen)
-  putStrLn $ "Turns to beat: " ++ show (solve d s)
-  -- solveM d s 1
-  run d d s 6
+  -- putStrLn $ "Turns to beat: " ++ show (solve d s)
+  loop d d s 6
+
+main = play
