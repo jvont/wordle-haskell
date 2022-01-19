@@ -1,9 +1,19 @@
-module Wordle (play, solve, solveM) where
+module Wordle (play, guess, solveFor, solveForM) where
 
+import Control.Monad
 import Data.Function (on)
 import Data.List
 import qualified Data.Map as M
+import Data.Maybe
 import System.Random
+
+-- Filter a list by comparing it to another list
+filterOn :: (a -> b -> Bool) -> [a] -> [b] -> [a]
+filterOn p xs = map fst . filter (uncurry p) . zip xs
+
+-- Check whether a list has more than a max number of duplicates
+maxDups :: (Eq a) => Int -> [a] -> Bool
+maxDups k l = length l <= length (nub l) + k
 
 {-
 Wordle rules:
@@ -33,14 +43,6 @@ instance Show Hint where
           bgGreen  = "\ESC[42m" ++ tcBlack
           bgYellow = "\ESC[43m" ++ tcBlack
   showList cs = (concatMap show cs ++)
-
--- Filter a list by comparing it to another list
-filterOn :: (a -> b -> Bool) -> [a] -> [b] -> [a]
-filterOn p xs = map fst . filter (uncurry p) . zip xs
-
--- Check whether a list has more than a max number of duplicates
-maxDups :: (Eq a) => Int -> [a] -> Bool
-maxDups k l = length l <= length (nub l) + k
 
 -- Hints for a given solution and guess word
 hints :: String -> String -> [Hint]
@@ -78,6 +80,10 @@ matches g w = corr g w && and (rest g rem) where
     where e = (`elem` ys)
           f x = if e x then delete x ys else ys
 
+-- Filter possible solution words based on hint
+solutions :: [Hint] -> [String] -> [String]
+solutions = filter . matches
+
 -- Scoring heuristic, the sum of letter frequencies for a given word
 wordScore :: M.Map Char Int -> String -> Int
 wordScore m = sum . map (\x -> M.findWithDefault 0 x m)
@@ -86,33 +92,35 @@ wordScore m = sum . map (\x -> M.findWithDefault 0 x m)
 rankedWords :: M.Map Char Int -> [String] -> [String]
 rankedWords m = sortBy (flip compare `on` wordScore m)
 
--- Filter possible solution words based on hint
-solutions :: [Hint] -> [String] -> [String]
-solutions = filter . matches
-
 -- Letter frequences from a list of words
 letterFreqs :: [String] -> M.Map Char Int
 letterFreqs l = M.fromListWith (+) [(x, 1) | x <- concat l]
 
--- Solve for and return the next best word, along with remaining solutions
-solveWord :: [String] -> String -> (String, [String])
-solveWord [x] s = (s, [x])
-solveWord d s = (g, solutions h d) where
-  r = rankedWords (letterFreqs d) d
-  g = case find (maxDups 0) r of
+-- Get the best guess from a list of words
+bestGuess :: [String] -> String
+bestGuess d = let r = rankedWords (letterFreqs d) d in
+  case find (maxDups 0) r of
     Just x -> x
     Nothing -> head r
-  h = hints s g
 
--- Find a solution, returning the number of guesses
-solve :: [String] -> String -> Int
-solve d s = go d s 0 where
+-- Return the next best word based on hints, along with remaining solutions
+solveHint :: [String] -> [Hint] -> (String, [String])
+solveHint d h = (bestGuess d', d') where
+  d' = solutions h d
+
+-- Return the next best word based on a solution word's hints, along with remaining solutions
+solveWord :: [String] -> String -> (String, [String])
+solveWord d s = solveHint d $ hints s $ bestGuess d
+
+-- Find a solution for a given word, return the number of guesses
+solveFor :: [String] -> String -> Int
+solveFor d s = go d s 0 where
   go [x] s n = n
   go d s n = go (snd (solveWord d s)) s (n + 1)
 
 -- Find a solution, showing steps
-solveM :: [String] -> String -> IO Int
-solveM d s = go d s 0 where
+solveForM :: [String] -> String -> IO Int
+solveForM d s = go d s 0 where
   go d s n = do
     let (g, d') = solveWord d s
     if length d' == 1 then do
@@ -122,12 +130,12 @@ solveM d s = go d s 0 where
       print $ hints s g
       go d' s (n + 1)
 
--- Game loop
+-- play loop
 --   d = solution words
 --   r = remaining solution words
 --   s = solution word
 --   n = attempts remaining
-loop d r s n = do
+playLoop d r s n = do
   putStr $ show n ++ ": "
   g <- getLine
   if g `elem` d then do
@@ -139,10 +147,10 @@ loop d r s n = do
       then putStrLn "Great work!"
     else if n == 1
       then putStrLn $ "Uh oh! The right word was " ++ show s
-    else loop d r s (n - 1)
+    else playLoop d r s (n - 1)
   else do
     putStrLn "Invalid word!"
-    loop d d s n
+    playLoop d d s n
 
 play = do
   content <- readFile "words.txt"
@@ -150,7 +158,60 @@ play = do
   gen <- getStdGen
   let d = lines content
       s = d !! fst (randomR (0, length d) gen)
-  -- putStrLn $ "Turns to beat: " ++ show (solve d s)
-  loop d d s 6
+  -- putStrLn $ "Turns to beat: " ++ show (solveFor d s)
+  playLoop d d s 6
 
-main = play
+-- Process user input hint string
+hintsFrom :: String -> String -> Maybe [Hint]
+hintsFrom g h = zipWithM f h g where
+  f c x = case c of
+    'C' -> Just (Correct x)
+    'P' -> Just (Present x)
+    'A' -> Just (Absent  x)
+    _   -> Nothing
+
+getHints :: String -> [String] -> IO ()
+getHints g d = do
+  putStr "Input Wordle hints: "
+  l <- getLine
+  let h = hintsFrom g l
+      go h = case h of
+        Just i -> do
+          let (g', d') = solveHint d i
+          if all isCorrect i || length d == 1 then
+            putStrLn $ "Answer is" ++ g'
+          else do
+            putStrLn $ "Next guess: " ++ g'
+            getHints g' d'
+        Nothing -> do
+          putStrLn "Invalid hints, try again."
+          getHints g d
+        where
+          isCorrect (Correct _) = True
+          isCorrect _ = False
+  go h
+
+guessLoop d = do
+  putStr "Guessed word: "
+  g <- getLine
+  getHints g d
+
+guess = do
+  content <- readFile "words.txt"
+  let d = lines content
+  putStrLn "Welcome to Wordle guesser!"
+  putStrLn "Input Wordle hints in the following format:"
+  putStrLn $ c ++ " - correct"
+  putStrLn $ p ++ " - present"
+  putStrLn $ a ++ " - absent"
+  putStrLn $ "example: " ++ intercalate "" [c,p,c,a,a]
+  putStrLn ""
+  guessLoop d
+  where
+    c = show (Correct 'C')
+    p = show (Present 'P')
+    a = show (Absent  'A')
+
+-- main = play
+main = guess
+
