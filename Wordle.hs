@@ -5,7 +5,14 @@ import Data.Function (on)
 import Data.List
 import qualified Data.Map as M
 import Data.Maybe
+import System.Environment
 import System.Random
+
+-- TODO:
+--   clean up guess loop
+--   handle input hint errors
+--   empty list error
+--   command line args for "play" vs. "guess"/"solve"
 
 -- Filter a list by comparing it to another list
 filterOn :: (a -> b -> Bool) -> [a] -> [b] -> [a]
@@ -15,20 +22,18 @@ filterOn p xs = map fst . filter (uncurry p) . zip xs
 maxDups :: (Eq a) => Int -> [a] -> Bool
 maxDups k l = length l <= length (nub l) + k
 
-{-
-Wordle rules:
-  You have 6 attempts to guess a 5-letter word
-  Each guess must use the hints from previous attempts (hard mode)
+-- Wordle rules:
+--   You have 6 attempts to guess a 5-letter word
+--   Each guess must use the hints from previous attempts (hard mode)
 
-Wordle returns the following hints for a guess and a solution:
-  Correct - letters share the same position
-  Present - letter is not in the correct position
-  Absent  - letter does not exist
+-- Wordle returns the following hints for a guess and a solution:
+--   Correct - letters share the same position
+--   Present - letter is not in the correct position
+--   Absent  - letter does not exist
 
-Starting word heuristic:
-  Word containing the highest average letter frequencies, such that no
-  duplicate letters are used ("later" is the go-to)
--}
+-- Starting word heuristic:
+--   Word containing the highest average letter frequencies, such that no
+--   duplicate letters are used ("later" is the go-to)
 
 data Hint = Correct Char | Present Char | Absent Char deriving(Eq)
 
@@ -105,8 +110,7 @@ bestGuess d = let r = rankedWords (letterFreqs d) d in
 
 -- Return the next best word based on hints, along with remaining solutions
 solveHint :: [String] -> [Hint] -> (String, [String])
-solveHint d h = (bestGuess d', d') where
-  d' = solutions h d
+solveHint d h = (bestGuess d', d') where d' = solutions h d
 
 -- Return the next best word based on a solution word's hints, along with remaining solutions
 solveWord :: [String] -> String -> (String, [String])
@@ -174,22 +178,18 @@ getHints :: String -> [String] -> IO ()
 getHints g d = do
   putStr "Input Wordle hints: "
   l <- getLine
-  let h = hintsFrom g l
-      go h = case h of
-        Just i -> do
-          let (g', d') = solveHint d i
-          if all isCorrect i || length d == 1 then
-            putStrLn $ "Answer is" ++ g'
-          else do
-            putStrLn $ "Next guess: " ++ g'
-            getHints g' d'
-        Nothing -> do
-          putStrLn "Invalid hints, try again."
-          getHints g d
-        where
-          isCorrect (Correct _) = True
-          isCorrect _ = False
-  go h
+  case hintsFrom g l of
+    Just h -> do
+      let (g', d') = solveHint d h
+      case d' of
+        [] -> putStrLn "No solution found!"
+        [x] -> putStrLn $ "Answer is: " ++ show x
+        _ -> do
+          putStrLn $ "Next guess: " ++ g' ++ " (1/" ++ show (length d') ++ ")"
+          getHints g' d'
+    Nothing -> do
+      putStrLn "Invalid hints, try again."
+      getHints g d
 
 guessLoop d = do
   putStr "Guessed word: "
@@ -212,6 +212,9 @@ guess = do
     p = show (Present 'P')
     a = show (Absent  'A')
 
--- main = play
-main = guess
-
+main = do
+  args <- getArgs
+  case args of
+    ["play"] -> play
+    ["guess"] -> guess
+    _ -> putStrLn "[usage]"
