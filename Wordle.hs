@@ -50,120 +50,119 @@ instance Show Hint where
   showList cs = (concatMap show cs ++)
 
 -- Hints for a given solution and guess word
-hints :: String -> String -> [Hint]
-hints s g = pres corr rem where
+getHints :: String -> String -> [Hint]
+getHints soln guess = allHints where
   -- correct hints
-  corr = zipWith (\x y -> if x == y then Correct x else Absent x) g s
-  -- remaining solution letters
-  rem = filterOn (/=) s g
-  -- scan words which are present but incorrectly guessed
-  pres [] ys = []
-  pres (Absent x:xs) ys
-    | x `elem` ys = Present x:pres xs (delete x ys)
-    | otherwise   = Absent  x:pres xs ys
-  pres (x:xs) ys = x:pres xs ys
+  corrHints = zipWith isCorr guess soln where
+    isCorr x y
+      | x == y = Correct x
+      | otherwise = Absent x
+  -- find incorrect guess letters which are present
+  allHints = isPres corrHints guessNotCorr where
+    isPres [] ys = []
+    isPres (Absent x:xs) ys
+      | x `elem` ys = Present x:isPres xs (delete x ys)
+      | otherwise   = Absent  x:isPres xs ys
+    isPres (x:xs) ys = x:isPres xs ys
+    guessNotCorr = filterOn (/=) soln guess
 
 -- Check if a guess word matches hints
 matches :: [Hint] -> String -> Bool
-matches g w = corr g w && and (rest g rem) where
+matches hints word = matchesCorr && matchesPresAbs where
   -- matches correct/present hints
-  corr (x:xs) (y:ys) = case x of
-    Correct z -> y == z && corr xs ys
-    Present z -> y /= z && corr xs ys
-    _ -> corr xs ys
-  corr _ _ = True
-  -- remaining letters
-  rem = filterOn p w g where
-    p _ (Correct _) = False
-    p _ _ = True
+  matchesCorr = corr hints word where
+    corr (x:xs) (y:ys) = case x of
+      Correct z -> y == z && corr xs ys
+      Present z -> y /= z && corr xs ys
+      _ -> corr xs ys
+    corr _ _ = True
   -- matches present/absent hints
-  rest [] ys = []
-  rest (x:xs) ys = case x of
-    Present y -> e y : rest xs (f y)
-    Absent y -> not (e y) : rest xs ys
-    _ -> rest xs ys
-    where e = (`elem` ys)
-          f x = if e x then delete x ys else ys
-
--- Filter possible solution words based on hint
-solutions :: [Hint] -> [String] -> [String]
-solutions = filter . matches
+  matchesPresAbs = presAbs hints notCorr where
+    notCorr = filterOn p word hints where
+      p _ (Correct _) = False
+      p _ _ = True
+    presAbs [] ys = True
+    presAbs (x:xs) ys = case x of
+      Present y -> (y `elem` ys) && presAbs xs (delete y ys)
+      Absent y -> (y `notElem` ys) && presAbs xs ys
+      _ -> presAbs xs ys
 
 -- Scoring heuristic, the sum of letter frequencies for a given word
 wordScore :: M.Map Char Int -> String -> Int
-wordScore m = sum . map (\x -> M.findWithDefault 0 x m)
+wordScore scores = sum . map (\x -> M.findWithDefault 0 x scores)
 
 -- Rank words based on score
 rankedWords :: M.Map Char Int -> [String] -> [String]
-rankedWords m = sortBy (flip compare `on` wordScore m)
+rankedWords scores = sortBy (flip compare `on` wordScore scores)
 
--- Letter frequences from a list of words
+-- Letter frequences from a word dictionary
 letterFreqs :: [String] -> M.Map Char Int
-letterFreqs l = M.fromListWith (+) [(x, 1) | x <- concat l]
+letterFreqs dict = M.fromListWith (+) [(x, 1) | x <- concat dict]
 
--- Get the best guess from a list of words
+-- Get the best guess from a word dictionary
 bestGuess :: [String] -> String
-bestGuess d = let r = rankedWords (letterFreqs d) d in
+bestGuess dict = let r = rankedWords (letterFreqs dict) dict in
   case find (maxDups 0) r of
     Just x -> x
     Nothing -> head r
 
 -- Return the next best word based on hints, along with remaining solutions
 solveHint :: [String] -> [Hint] -> (String, [String])
-solveHint d h = (bestGuess d', d') where d' = solutions h d
+solveHint dict hints = let dict' = filter (matches hints) dict in (bestGuess dict', dict')
 
 -- Return the next best word based on a solution word's hints, along with remaining solutions
 solveWord :: [String] -> String -> (String, [String])
-solveWord d s = solveHint d $ hints s $ bestGuess d
+solveWord dict soln = solveHint dict $ getHints soln $ bestGuess dict
 
 -- Find a solution for a given word, return the number of guesses
-solveFor :: [String] -> String -> Int
-solveFor d s = go d s 0 where
-  go [x] s n = n
-  go d s n = go (snd (solveWord d s)) s (n + 1)
+solveFor :: [String] -> String -> Maybe Int
+solveFor dict soln = go dict soln 0 where
+  go [] _ _ = Nothing
+  go d s n
+    | length d' == 1 = Just n
+    | otherwise = go d' s (n + 1)
+    where d' = snd (solveWord d s)
 
 -- Find a solution, showing steps
 solveForM :: [String] -> String -> IO Int
-solveForM d s = go d s 0 where
+solveForM dict soln = go dict soln 0 where
   go d s n = do
     let (g, d') = solveWord d s
     if length d' == 1 then do
-      print $ hints s (head d')
-      return (n + 1)
+      return n
     else do
-      print $ hints s g
+      print $ getHints s g
       go d' s (n + 1)
 
 -- play loop
---   d = solution words
---   r = remaining solution words
---   s = solution word
---   n = attempts remaining
-playLoop d r s n = do
-  putStr $ show n ++ ": "
+--   dict = solution words
+--   rest = rest of possible words
+--   soln = solution word
+--   rem = remaining attempts
+playLoop :: [String] -> [String] -> String -> Int -> IO ()
+playLoop dict rest soln rem = do
+  putStr $ show rem ++ ": "
   g <- getLine
-  if g `elem` d then do
-    let h = hints s g
-        r = solutions h d
-    -- putStrLn $ "== " ++ show h ++ " (" ++ show (length r) ++ " remaining)"
-    putStrLn $ "== " ++ show h
-    if g == s
+  if g `elem` dict || g `elem` rest then do
+    putStrLn $ "== " ++ show (getHints soln g)
+    if g == soln
       then putStrLn "Great work!"
-    else if n == 1
-      then putStrLn $ "Uh oh! The right word was " ++ show s
-    else playLoop d r s (n - 1)
+    else if rem == 1
+      then putStrLn $ "Uh oh! The right word was " ++ show soln
+    else playLoop dict rest soln (rem - 1)
   else do
     putStrLn "Invalid word!"
-    playLoop d d s n
+    playLoop dict rest soln rem
 
 play = do
-  content <- readFile "words.txt"
+  solutions <- readFile "solutions.txt"
+  words <- readFile "words.txt"
   -- get random word, solve
   gen <- getStdGen
-  let d = lines content
-      s = d !! fst (randomR (0, length d) gen)
-  -- putStrLn $ "Turns to beat: " ++ show (solveFor d s)
-  playLoop d d s 6
+  let dict = lines solutions
+      rest = lines words
+      soln = dict !! fst (randomR (0, length dict) gen)
+  playLoop dict rest soln 6
 
 -- Process user input hint string
 hintsFrom :: String -> String -> Maybe [Hint]
@@ -174,39 +173,41 @@ hintsFrom g h = zipWithM f h g where
     'A' -> Just (Absent  x)
     _   -> Nothing
 
-getHints :: String -> [String] -> IO ()
-getHints g d = do
+guessLoop :: [String] -> String -> IO ()
+guessLoop dict guess = do
+  putStr "Guessed word (press Enter to skip): "
+  inputGuess <- getLine
+  let newGuess = if null inputGuess then guess else inputGuess
   putStr "Input Wordle hints: "
-  l <- getLine
-  case hintsFrom g l of
-    Just h -> do
-      let (g', d') = solveHint d h
-      case d' of
+  hintString <- getLine
+  putStrLn ""
+  case hintsFrom newGuess hintString of
+    Just hint -> do
+      let (guess', dict') = solveHint dict hint
+      case dict' of
         [] -> putStrLn "No solution found!"
         [x] -> putStrLn $ "Answer is: " ++ show x
         _ -> do
-          putStrLn $ "Next guess: " ++ g' ++ " (1/" ++ show (length d') ++ ")"
-          getHints g' d'
+          putStrLn $ "Next guess: try " ++ guess' ++ " (1/" ++ show (length dict') ++ ")"
+          guessLoop dict' guess'
     Nothing -> do
       putStrLn "Invalid hints, try again."
-      getHints g d
-
-guessLoop d = do
-  putStr "Guessed word: "
-  g <- getLine
-  getHints g d
+      guessLoop dict guess
 
 guess = do
-  content <- readFile "words.txt"
-  let d = lines content
-  putStrLn "Welcome to Wordle guesser!"
-  putStrLn "Input Wordle hints in the following format:"
-  putStrLn $ c ++ " - correct"
-  putStrLn $ p ++ " - present"
-  putStrLn $ a ++ " - absent"
-  putStrLn $ "example: " ++ intercalate "" [c,p,c,a,a]
-  putStrLn ""
-  guessLoop d
+  solutions <- readFile "solutions.txt"
+  let dict = lines solutions
+  putStrLn $ unlines [
+    "Welcome to Wordle guesser!",
+    "Input Wordle hints in the following format:",
+    c ++ " - correct",
+    p ++ " - present",
+    a ++ " - absent",
+    "example: " ++ intercalate "" [c,p,c,a,a]
+    ]
+  let guess = bestGuess dict
+  putStrLn $ "First guess: try " ++ show guess
+  guessLoop dict guess
   where
     c = show (Correct 'C')
     p = show (Present 'P')
@@ -217,4 +218,8 @@ main = do
   case args of
     ["play"] -> play
     ["guess"] -> guess
-    _ -> putStrLn "[usage]"
+    _ -> do
+      case args of
+        [] -> putStrLn "No argument provided."
+        _ -> putStrLn "Invalid argument(s)."
+      putStrLn "Usage: wordle (play | guess)"
