@@ -1,7 +1,7 @@
 import Data.Function (on)
 import Data.List
-import Text.Printf
 import Data.Maybe (mapMaybe)
+import Text.Printf (printf)
 import qualified Wordle as W
 
 -- List average (from: https://stackoverflow.com/a/2377067/15837840)
@@ -15,7 +15,8 @@ main = do
   -- Test solveM
   putStrLn "Search for \"shire\" using solveM:"
   avg <- W.solveForM dict "shire"
-  putStrLn $ "Took " ++ show avg ++ " turns"
+  putStrLn $ "Took " ++ show avg ++ " turns\n"
   -- Solver average performance
-  printf "Average turns taken across all solutions: %.2f\n" avgAll
+  putStrLn "Average turns taken across all solutions:"
+  printf "%.2f turns\n" avgAll
   

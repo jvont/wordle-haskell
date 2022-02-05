@@ -1,18 +1,13 @@
 module Wordle (play, guess, solveFor, solveForM) where
 
 import Control.Monad
+import Data.Char (toLower, toUpper)
 import Data.Function (on)
 import Data.List
 import qualified Data.Map as M
 import Data.Maybe
 import System.Environment
 import System.Random
-
--- TODO:
---   clean up guess loop
---   handle input hint errors
---   empty list error
---   command line args for "play" vs. "guess"/"solve"
 
 -- Filter a list by comparing it to another list
 filterOn :: (a -> b -> Bool) -> [a] -> [b] -> [a]
@@ -108,7 +103,9 @@ bestGuess dict = let r = rankedWords (letterFreqs dict) dict in
 
 -- Return the next best word based on hints, along with remaining solutions
 solveHint :: [String] -> [Hint] -> (String, [String])
-solveHint dict hints = let dict' = filter (matches hints) dict in (bestGuess dict', dict')
+solveHint dict hints =
+  let dict' = filter (hints `matches`) dict
+  in  (bestGuess dict', dict')
 
 -- Return the next best word based on a solution word's hints, along with remaining solutions
 solveWord :: [String] -> String -> (String, [String])
@@ -142,7 +139,7 @@ solveForM dict soln = go dict soln 0 where
 playLoop :: [String] -> [String] -> String -> Int -> IO ()
 playLoop dict rest soln rem = do
   putStr $ show rem ++ ": "
-  g <- getLine
+  g <- map toLower <$> getLine
   if g `elem` dict || g `elem` rest then do
     putStrLn $ "== " ++ show (getHints soln g)
     if g == soln
@@ -151,35 +148,35 @@ playLoop dict rest soln rem = do
       then putStrLn $ "Uh oh! The right word was " ++ show soln
     else playLoop dict rest soln (rem - 1)
   else do
+    -- return to last line, clear
+    putStr "\ESC[1A\ESC[K\r"
     putStrLn "Invalid word!"
     playLoop dict rest soln rem
 
 play = do
-  solutions <- readFile "solutions.txt"
-  words <- readFile "words.txt"
+  dict <- lines <$> readFile "solutions.txt"
+  rest <- lines <$> readFile "words.txt"
   -- get random word, solve
   gen <- getStdGen
-  let dict = lines solutions
-      rest = lines words
-      soln = dict !! fst (randomR (0, length dict) gen)
+  let soln = dict !! fst (randomR (0, length dict) gen)
   playLoop dict rest soln 6
 
 -- Process user input hint string
 hintsFrom :: String -> String -> Maybe [Hint]
-hintsFrom g h = zipWithM f h g where
-  f c x = case c of
-    'C' -> Just (Correct x)
-    'P' -> Just (Present x)
-    'A' -> Just (Absent  x)
+hintsFrom guess hintStr = zipWithM toHint hintStr guess where
+  toHint h g = case h of
+    'C' -> Just (Correct g)
+    'P' -> Just (Present g)
+    'A' -> Just (Absent  g)
     _   -> Nothing
 
 guessLoop :: [String] -> String -> IO ()
 guessLoop dict guess = do
   putStr "Guessed word (press Enter to skip): "
-  inputGuess <- getLine
+  inputGuess <- map toLower <$> getLine
   let newGuess = if null inputGuess then guess else inputGuess
   putStr "Input Wordle hints: "
-  hintString <- getLine
+  hintString <- map toUpper <$> getLine
   putStrLn ""
   case hintsFrom newGuess hintString of
     Just hint -> do
