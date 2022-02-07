@@ -1,4 +1,4 @@
-module Wordle (play, guess, solveFor, solveForM) where
+module Wordle (play, guess, solve) where
 
 import Control.Monad
 import Data.Char (toLower, toUpper)
@@ -112,24 +112,13 @@ solveWord :: [String] -> String -> (String, [String])
 solveWord dict soln = solveHint dict $ getHints soln $ bestGuess dict
 
 -- Find a solution for a given word, return the number of guesses
-solveFor :: [String] -> String -> Maybe Int
-solveFor dict soln = go dict soln 0 where
+solve :: [String] -> String -> Maybe Int
+solve dict soln = go dict soln 0 where
   go [] _ _ = Nothing
   go d s n
-    | length d' == 1 = Just n
+    | length d' == 1 = Just (n + 1)
     | otherwise = go d' s (n + 1)
     where d' = snd (solveWord d s)
-
--- Find a solution, showing steps
-solveForM :: [String] -> String -> IO Int
-solveForM dict soln = go dict soln 0 where
-  go d s n = do
-    let (g, d') = solveWord d s
-    if length d' == 1 then do
-      return n
-    else do
-      print $ getHints s g
-      go d' s (n + 1)
 
 -- play loop
 --   dict = solution words
